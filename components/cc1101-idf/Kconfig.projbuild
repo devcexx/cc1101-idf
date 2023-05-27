@@ -1,0 +1,9 @@
+menu "CC1101-IDF Configuration"
+    config ENABLE_DEBUG_SYMBOLS
+        bool "Enable debug symbols"
+	default y
+	help
+	    Enables the compilation of debugging tools for CC1101,
+	    like registers names, and other debugging-related
+	    functions.
+endmenu
