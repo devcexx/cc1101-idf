@@ -197,6 +197,12 @@ typedef union {
 
 esp_err_t cc1101_init(spi_host_device_t spi_host, cc1101_device_t *device);
 
+esp_err_t cc1101_spi_tx(const cc1101_device_t *device, uint8_t cmd,
+                        const uint8_t *in, uint8_t *out, size_t len);
+
+esp_err_t cc1101_spi_tx_u8(const cc1101_device_t *device, uint8_t cmd,
+                           uint8_t in, uint8_t *out);
+
 esp_err_t cc1101_read_config_reg(const cc1101_device_t *device,
                                  cc1101_config_reg_t reg, uint8_t *value);
 

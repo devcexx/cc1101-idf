@@ -14,7 +14,6 @@
 #include "esp_check.h"
 
 #define TAG "cc1101"
-#define BYTES_IN_RXFIFO 0x47
 
 #define ERR_MSG_SPI_BUS_LOCK "Unable to acquire SPI bus lock"
 #define ERR_MSG_SPI_TX_BEGIN "Unable to begin transaction"
@@ -64,7 +63,11 @@ esp_err_t cc1101_init(spi_host_device_t spi_host, cc1101_device_t *device) {
     // wait until MISO goes low before start TX. For that reason we're
     // manually controlling CS.
     .spics_io_num=-1,
-    .queue_size=CC1101_SPI_QUEUE_SIZE
+    .queue_size=CC1101_SPI_QUEUE_SIZE,
+    // The most common way of communicating with the CC1101 is using a
+    // header byte prior to sending data, so we're setting this as
+    // default and opting-out when we need it.
+    .command_bits = 8
   };
 
   if ((err = spi_bus_add_device(spi_host, &devcfg, &device->spi_device)) != ESP_OK) {
@@ -74,20 +77,28 @@ esp_err_t cc1101_init(spi_host_device_t spi_host, cc1101_device_t *device) {
   return ESP_OK;
 }
 
-esp_err_t spi_tx(spi_device_handle_t handle, const uint8_t* in, uint8_t* out, size_t len) {
-  spi_transaction_t trans = { 0 };
-  trans.length = len * 8;
-  trans.tx_buffer = in;
-  trans.rx_buffer = out;
+static void spi_fill_tx(spi_transaction_t* trans, uint8_t cmd, const uint8_t* in, uint8_t* out, size_t len) {
+  trans->length = len * 8;
+  trans->tx_buffer = in;
+  trans->rx_buffer = out;
+  trans->cmd = cmd;
+}
 
+static esp_err_t spi_tx(spi_device_handle_t handle, uint8_t cmd, const uint8_t* in, uint8_t* out, size_t len) {
+  spi_transaction_t trans = { 0 };
+  spi_fill_tx(&trans, cmd, in, out, len);
   return spi_device_transmit(handle, &trans);
 }
 
-esp_err_t spi_tx_u8(spi_device_handle_t handle, uint8_t in, uint8_t* out) {
-  return spi_tx(handle, &in, out, 1);
+static esp_err_t spi_tx_no_cmd(spi_device_handle_t handle, const uint8_t* in, uint8_t* out, size_t len) {
+  spi_transaction_ext_t trans = { 0 };
+  spi_fill_tx(&trans.base, 0, in, out, len);
+  trans.base.flags |= SPI_TRANS_VARIABLE_CMD;
+  trans.command_bits = 0;
+  return spi_device_transmit(handle, (spi_transaction_t*) &trans);
 }
 
-esp_err_t spi_begin_transaction(const cc1101_device_t *device) {
+static esp_err_t spi_begin_transaction(const cc1101_device_t *device) {
   int64_t begin_time = esp_timer_get_time();
   cc1101_chip_select(device);
 
@@ -104,17 +115,18 @@ esp_err_t spi_begin_transaction(const cc1101_device_t *device) {
   return ESP_OK;
 }
 
-void spi_end_transaction(const cc1101_device_t *device) {
+static void spi_end_transaction(const cc1101_device_t *device) {
   active_wait_us(1);
   gpio_set_level(device->cs_io_num, 1);
 }
 
-esp_err_t cc1101_spi_tx(const cc1101_device_t* device, uint8_t* in, uint8_t* out, size_t len) {
+static esp_err_t cc1101_spi_tx_no_cmd(const cc1101_device_t* device, const uint8_t* in,
+			uint8_t* out, size_t len) {
   esp_err_t ret = ESP_OK;
 
   ESP_RETURN_ON_ERROR(spi_device_acquire_bus(device->spi_device, portMAX_DELAY), TAG, ERR_MSG_SPI_BUS_LOCK);
   ESP_GOTO_ON_ERROR(spi_begin_transaction(device), end_bus, TAG, ERR_MSG_SPI_TX_BEGIN);
-  ESP_GOTO_ON_ERROR(spi_tx(device->spi_device, in, out, len), end_tx, TAG, ERR_MSG_SPI_TX);
+  ESP_GOTO_ON_ERROR(spi_tx_no_cmd(device->spi_device, in, out, len), end_tx, TAG, ERR_MSG_SPI_TX);
 
  end_tx:
   spi_end_transaction(device);
@@ -122,6 +134,28 @@ esp_err_t cc1101_spi_tx(const cc1101_device_t* device, uint8_t* in, uint8_t* out
  end_bus:
   spi_device_release_bus(device->spi_device);
   return ret;
+ }
+
+
+esp_err_t cc1101_spi_tx(const cc1101_device_t* device, uint8_t cmd, const uint8_t* in,
+			uint8_t* out, size_t len) {
+  esp_err_t ret = ESP_OK;
+
+  ESP_RETURN_ON_ERROR(spi_device_acquire_bus(device->spi_device, portMAX_DELAY), TAG, ERR_MSG_SPI_BUS_LOCK);
+  ESP_GOTO_ON_ERROR(spi_begin_transaction(device), end_bus, TAG, ERR_MSG_SPI_TX_BEGIN);
+  ESP_GOTO_ON_ERROR(spi_tx(device->spi_device, cmd, in, out, len), end_tx, TAG, ERR_MSG_SPI_TX);
+
+ end_tx:
+  spi_end_transaction(device);
+
+ end_bus:
+  spi_device_release_bus(device->spi_device);
+  return ret;
+ }
+
+esp_err_t cc1101_spi_tx_u8(const cc1101_device_t* device, uint8_t cmd, uint8_t in,
+			   uint8_t* out) {
+  return cc1101_spi_tx(device, cmd, &in, out, 1);
 }
 
 #ifdef CONFIG_ENABLE_DEBUG_SYMBOLS
@@ -230,97 +264,38 @@ esp_err_t cc1101_debug_print_regs(const cc1101_device_t *device) {
 #endif
 
 esp_err_t cc1101_strobe(const cc1101_device_t *device, cc1101_strobe_t strobe, cc1101_chip_status_t* chip_status) {
-  esp_err_t ret = ESP_OK;
-
-  ESP_RETURN_ON_ERROR(spi_device_acquire_bus(device->spi_device, portMAX_DELAY), TAG, ERR_MSG_SPI_BUS_LOCK);
-  ESP_GOTO_ON_ERROR(spi_begin_transaction(device), end_bus, TAG, ERR_MSG_SPI_TX_BEGIN);
-  ESP_GOTO_ON_ERROR(spi_tx_u8(device->spi_device, strobe, &chip_status->byte), end_tx, TAG, ERR_MSG_SPI_TX);
-
- end_tx:
-  spi_end_transaction(device);
-
- end_bus:
-  spi_device_release_bus(device->spi_device);
-  return ret;
+  return cc1101_spi_tx_no_cmd(device, &strobe, &chip_status->byte, 1);
 }
 
 esp_err_t cc1101_chip_status(const cc1101_device_t *device,
                              cc1101_chip_status_t *chip_status) {
+  // Chip status can be obtained from the CC1101 as the RX data coming
+  // during a SPI transaction when the header byte is being sent, so
+  // that basically means it can be obtained virtually anyway. Just
+  // picking this one because I like it.
   return cc1101_strobe(device, CC1101_STROBE_NOP, chip_status);
 }
 
-static esp_err_t cc1101_rw_single_reg(const cc1101_device_t* device, uint8_t addr, uint8_t newval, cc1101_chip_status_t* chip_status, uint8_t *value) {
-  esp_err_t ret = ESP_OK;
-  uint8_t txbuf[2] = { addr, newval };
-  uint8_t rxbuf[2];
-
-  ESP_RETURN_ON_ERROR(spi_device_acquire_bus(device->spi_device, portMAX_DELAY), TAG, ERR_MSG_SPI_BUS_LOCK);
-  ESP_GOTO_ON_ERROR(spi_begin_transaction(device), end_bus, TAG, ERR_MSG_SPI_TX_BEGIN);
-  ESP_GOTO_ON_ERROR(spi_tx(device->spi_device, txbuf, rxbuf, 2), end_tx, TAG, ERR_MSG_SPI_TX);
-
-  if (chip_status != NULL) {
-    chip_status->byte = rxbuf[0];
-  }
-
-  if (value != NULL) {
-    *value = rxbuf[1];
-  }
-
- end_tx:
-  spi_end_transaction(device);
-
- end_bus:
-  spi_device_release_bus(device->spi_device);
-  return ret;
-}
-
 esp_err_t cc1101_write_config_reg(const cc1101_device_t* device, cc1101_config_reg_t reg, uint8_t value) {
-  return cc1101_rw_single_reg(device, reg, value, NULL, NULL);
+  return cc1101_spi_tx_u8(device, reg, value, NULL);
 }
-
 
 esp_err_t cc1101_read_config_reg(const cc1101_device_t* device, cc1101_config_reg_t reg, uint8_t *value) {
-  return cc1101_rw_single_reg(device, REGREAD(reg), 0, NULL, value);
+  return cc1101_spi_tx_u8(device, REGREAD(reg), 0, value);
 }
 
 esp_err_t cc1101_read_status_reg(const cc1101_device_t* device, cc1101_status_reg_t reg, uint8_t *value) {
-  return cc1101_rw_single_reg(device, STREAD(reg), 0, NULL, value);
+  return cc1101_spi_tx_u8(device, STREAD(reg), 0, value);
 }
 
 esp_err_t cc1101_write_burst(const cc1101_device_t* device, cc1101_config_reg_t reg_begin, const uint8_t* values, size_t len) {
-  esp_err_t ret = ESP_OK;
-  uint8_t addr = BURSTWRITE(reg_begin);
-
-  ESP_RETURN_ON_ERROR(spi_device_acquire_bus(device->spi_device, portMAX_DELAY), TAG, ERR_MSG_SPI_BUS_LOCK);
-  ESP_GOTO_ON_ERROR(spi_begin_transaction(device), end_bus, TAG, ERR_MSG_SPI_TX_BEGIN);
-  ESP_GOTO_ON_ERROR(spi_tx_u8(device->spi_device, addr, NULL), end_tx, TAG, ERR_MSG_SPI_TX);
-  ESP_GOTO_ON_ERROR(spi_tx(device->spi_device, values, NULL, len), end_tx, TAG, ERR_MSG_SPI_TX);
-
- end_tx:
-  spi_end_transaction(device);
-
- end_bus:
-  spi_device_release_bus(device->spi_device);
-  return ret;
+  return cc1101_spi_tx(device, BURSTWRITE(reg_begin), values, NULL, len);
 }
 
 esp_err_t cc1101_read_burst(const cc1101_device_t* device, cc1101_config_reg_t reg_begin, uint8_t* output, size_t len) {
-  esp_err_t ret = ESP_OK;
   uint8_t txbuf[len];
-  uint8_t addr = BURSTREAD(reg_begin);
   memset(txbuf, 0, len);
-
-  ESP_RETURN_ON_ERROR(spi_device_acquire_bus(device->spi_device, portMAX_DELAY), TAG, ERR_MSG_SPI_BUS_LOCK);
-  ESP_GOTO_ON_ERROR(spi_begin_transaction(device), end_bus, TAG, ERR_MSG_SPI_TX_BEGIN);
-  ESP_GOTO_ON_ERROR(spi_tx_u8(device->spi_device, addr, NULL), end_tx, TAG, ERR_MSG_SPI_TX);
-  ESP_GOTO_ON_ERROR(spi_tx(device->spi_device, txbuf, output, len), end_tx, TAG, ERR_MSG_SPI_TX);
-
- end_tx:
-  spi_end_transaction(device);
-
- end_bus:
-  spi_device_release_bus(device->spi_device);
-  return ret;
+  return cc1101_spi_tx(device, BURSTREAD(reg_begin), txbuf, output, len);
 }
 
 esp_err_t cc1101_hard_reset(const cc1101_device_t *device) {
