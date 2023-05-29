@@ -36,7 +36,7 @@ const char *cc1101_status_reg_names[] = {
 };
 #endif
 
-void active_wait_us(int micros) {
+static void active_wait_us(int micros) {
   int64_t begin = esp_timer_get_time();
   while (esp_timer_get_time() - begin < micros);
 }
@@ -198,7 +198,9 @@ esp_err_t cc1101_debug_print_regs(const cc1101_device_t *device) {
   size_t num_status_regs = CC1101_STATUS_REG_COUNT;
   uint8_t config_regs[num_conf_regs];
   uint8_t status_regs[num_status_regs];
+  uint8_t patable[CC1101_PATABLE_SIZE] = { 0 };
   cc1101_chip_status_t status;
+
   ESP_RETURN_ON_ERROR(cc1101_chip_status(device, &status),
 		      TAG, "Couldn't read chip status");
 
@@ -209,6 +211,9 @@ esp_err_t cc1101_debug_print_regs(const cc1101_device_t *device) {
     ESP_RETURN_ON_ERROR(cc1101_read_status_reg(device, CC1101_FIRST_STATUS_REG + i, &status_regs[i]),
 			TAG, "Couldn't read status regs");
   }
+
+  ESP_RETURN_ON_ERROR(cc1101_read_patable(device, patable),
+		      TAG, "Couldn't read PATABLE");
 
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "Chip status: !ready= %d; state= %s; fifo usage data= %d",
@@ -258,6 +263,15 @@ esp_err_t cc1101_debug_print_regs(const cc1101_device_t *device) {
 	       REG_FORMAT_PARAMS(cc1101_status_reg_name(reg_addr), reg_addr, status_regs[i]));
     }
   }
+
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "PATABLE:");
+  ESP_LOGI(TAG, "");
+  ESP_LOGI(TAG, "%02x %02x %02x %02x %02x %02x %02x %02x",
+	   patable[0], patable[1], patable[2],
+	   patable[3], patable[4], patable[5],
+	   patable[6], patable[7]);
+
   return ESP_OK;
 }
 
@@ -296,6 +310,15 @@ esp_err_t cc1101_read_burst(const cc1101_device_t* device, cc1101_config_reg_t r
   uint8_t txbuf[len];
   memset(txbuf, 0, len);
   return cc1101_spi_tx(device, BURSTREAD(reg_begin), txbuf, output, len);
+}
+
+esp_err_t cc1101_write_patable(const cc1101_device_t *device, const uint8_t data[CC1101_PATABLE_SIZE]) {
+  return cc1101_spi_tx(device, BURSTWRITE(CC1101_HEADER_PATABLE), data, NULL, CC1101_PATABLE_SIZE);
+}
+
+esp_err_t cc1101_read_patable(const cc1101_device_t *device, uint8_t data[CC1101_PATABLE_SIZE]) {
+  uint8_t txbuf[CC1101_PATABLE_SIZE] = { 0 };
+  return cc1101_spi_tx(device, BURSTREAD(CC1101_HEADER_PATABLE), txbuf, data, CC1101_PATABLE_SIZE);
 }
 
 esp_err_t cc1101_hard_reset(const cc1101_device_t *device) {

@@ -106,6 +106,9 @@ typedef enum __attribute__((packed)) {
 
 } cc1101_strobe_t;
 
+#define CC1101_HEADER_PATABLE 0x3E
+#define CC1101_PATABLE_SIZE 8
+
 // Header building macros
 
 /*
@@ -225,6 +228,9 @@ esp_err_t cc1101_write_burst(const cc1101_device_t *device,
 esp_err_t cc1101_read_burst(const cc1101_device_t *device,
                             cc1101_config_reg_t reg_begin, uint8_t *output,
                             size_t len);
+
+esp_err_t cc1101_write_patable(const cc1101_device_t *device, const uint8_t data[CC1101_PATABLE_SIZE]);
+esp_err_t cc1101_read_patable(const cc1101_device_t *device, uint8_t data[CC1101_PATABLE_SIZE]);
 
 #ifdef CONFIG_ENABLE_DEBUG_SYMBOLS
 /**
