@@ -2,6 +2,7 @@
 #include "freertos/portmacro.h"
 #include "freertos/task.h"
 #include "include/cc1101.h"
+#include "include_priv/cc1101_priv.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_err.h"
@@ -41,20 +42,30 @@ static void active_wait_us(int micros) {
   while (esp_timer_get_time() - begin < micros);
 }
 
-static inline esp_err_t cc1101_chip_select(const cc1101_device_t *device) {
+static inline esp_err_t cc1101_chip_select(const cc1101_device_priv_t *device) {
   return gpio_set_level(device->cs_io_num, 0);
 }
 
-static inline esp_err_t cc1101_chip_deselect(const cc1101_device_t *device) {
+static inline esp_err_t cc1101_chip_deselect(const cc1101_device_priv_t *device) {
   return gpio_set_level(device->cs_io_num, 1);
 }
 
-esp_err_t cc1101_init(spi_host_device_t spi_host, cc1101_device_t *device) {
+esp_err_t cc1101_init(const cc1101_device_cfg_t *cfg, cc1101_device_t** device) {
   esp_err_t err;
+  cc1101_device_priv_t* dev;
+  if ((err = cc1101_allocate_device(cfg, &dev)) != ESP_OK) {
+    ESP_LOGE(TAG, "Couldn't allocate a new CC1101 device. "
+	     "Try increasing the CONFIG_MAX_CC1101_DEVICES value");
+    return err;
+  }
+  dev->cs_io_num = cfg->cs_io_num;
+  dev->gdo0_io_num = cfg->gdo0_io_num;
+  dev->gdo2_io_num = cfg->gdo2_io_num;
+  dev->miso_io_num = cfg->miso_io_num;
 
-  gpio_reset_pin(device->cs_io_num);
-  gpio_set_direction(device->cs_io_num, GPIO_MODE_OUTPUT);
-  cc1101_chip_deselect(device);
+  gpio_reset_pin(cfg->cs_io_num);
+  gpio_set_direction(cfg->cs_io_num, GPIO_MODE_OUTPUT);
+  cc1101_chip_deselect(dev);
 
   spi_device_interface_config_t devcfg = {
     .clock_speed_hz=CC1101_SCLK_HZ,
@@ -70,10 +81,11 @@ esp_err_t cc1101_init(spi_host_device_t spi_host, cc1101_device_t *device) {
     .command_bits = 8
   };
 
-  if ((err = spi_bus_add_device(spi_host, &devcfg, &device->spi_device)) != ESP_OK) {
+  if ((err = spi_bus_add_device(cfg->spi_host, &devcfg, &dev->spi_device)) != ESP_OK) {
     return err;
   }
 
+  *device = (cc1101_device_t*) dev;
   return ESP_OK;
 }
 
@@ -98,7 +110,7 @@ static esp_err_t spi_tx_no_cmd(spi_device_handle_t handle, const uint8_t* in, ui
   return spi_device_transmit(handle, (spi_transaction_t*) &trans);
 }
 
-static esp_err_t spi_begin_transaction(const cc1101_device_t *device) {
+static esp_err_t spi_begin_transaction(const cc1101_device_priv_t *device) {
   int64_t begin_time = esp_timer_get_time();
   cc1101_chip_select(device);
 
@@ -115,12 +127,12 @@ static esp_err_t spi_begin_transaction(const cc1101_device_t *device) {
   return ESP_OK;
 }
 
-static void spi_end_transaction(const cc1101_device_t *device) {
+static void spi_end_transaction(const cc1101_device_priv_t *device) {
   active_wait_us(1);
   gpio_set_level(device->cs_io_num, 1);
 }
 
-static esp_err_t cc1101_spi_tx_no_cmd(const cc1101_device_t* device, const uint8_t* in,
+static esp_err_t cc1101_spi_tx_no_cmd(const cc1101_device_priv_t* device, const uint8_t* in,
 			uint8_t* out, size_t len) {
   esp_err_t ret = ESP_OK;
 
@@ -139,14 +151,16 @@ static esp_err_t cc1101_spi_tx_no_cmd(const cc1101_device_t* device, const uint8
 
 esp_err_t cc1101_spi_tx(const cc1101_device_t* device, uint8_t cmd, const uint8_t* in,
 			uint8_t* out, size_t len) {
+  const cc1101_device_priv_t* dev = cc1101_get_device(device);
+
   esp_err_t ret = ESP_OK;
 
   ESP_RETURN_ON_ERROR(spi_device_acquire_bus(device->spi_device, portMAX_DELAY), TAG, ERR_MSG_SPI_BUS_LOCK);
-  ESP_GOTO_ON_ERROR(spi_begin_transaction(device), end_bus, TAG, ERR_MSG_SPI_TX_BEGIN);
+  ESP_GOTO_ON_ERROR(spi_begin_transaction(dev), end_bus, TAG, ERR_MSG_SPI_TX_BEGIN);
   ESP_GOTO_ON_ERROR(spi_tx(device->spi_device, cmd, in, out, len), end_tx, TAG, ERR_MSG_SPI_TX);
 
  end_tx:
-  spi_end_transaction(device);
+  spi_end_transaction(dev);
 
  end_bus:
   spi_device_release_bus(device->spi_device);
@@ -278,7 +292,8 @@ esp_err_t cc1101_debug_print_regs(const cc1101_device_t *device) {
 #endif
 
 esp_err_t cc1101_strobe(const cc1101_device_t *device, cc1101_strobe_t strobe, cc1101_chip_status_t* chip_status) {
-  return cc1101_spi_tx_no_cmd(device, &strobe, &chip_status->byte, 1);
+  const cc1101_device_priv_t* dev = cc1101_get_device(device);
+  return cc1101_spi_tx_no_cmd(dev, &strobe, &chip_status->byte, 1);
 }
 
 esp_err_t cc1101_chip_status(const cc1101_device_t *device,
@@ -322,9 +337,11 @@ esp_err_t cc1101_read_patable(const cc1101_device_t *device, uint8_t data[CC1101
 }
 
 esp_err_t cc1101_hard_reset(const cc1101_device_t *device) {
-  cc1101_chip_select(device);
+  const cc1101_device_priv_t* dev = cc1101_get_device(device);
+
+  cc1101_chip_select(dev);
   active_wait_us(5);
-  cc1101_chip_deselect(device);
+  cc1101_chip_deselect(dev);
   active_wait_us(40);
   return cc1101_strobe(device, CC1101_STROBE_RES, NULL);
 }

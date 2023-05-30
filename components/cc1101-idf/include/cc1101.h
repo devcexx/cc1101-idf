@@ -101,13 +101,18 @@ typedef enum __attribute__((packed)) {
 #define STREAD(reg) BURSTREAD(reg)
 
 typedef struct {
+  // Keep the same header as cc1101_device_t so a ptr to
+  // cc1101_device_priv_t can be trated as a ptr to cc1101_device_t.
   spi_device_handle_t spi_device;
+} cc1101_device_t;
 
+typedef struct {
+  spi_host_device_t spi_host;
   gpio_num_t miso_io_num;
   gpio_num_t gdo0_io_num;
   gpio_num_t gdo2_io_num;
   gpio_num_t cs_io_num;
-} cc1101_device_t;
+} cc1101_device_cfg_t;
 
 typedef enum __attribute__((packed)) {
   CC1101_DEVICE_STATE_IDLE = 0,
@@ -129,7 +134,13 @@ typedef union {
   } fields;
 } cc1101_chip_status_t;
 
-esp_err_t cc1101_init(spi_host_device_t spi_host, cc1101_device_t *device);
+typedef void (*cc1101_sync_mode_clk_cb)(const cc1101_device_t* device, void* user);
+typedef struct {
+  cc1101_sync_mode_clk_cb clk_cb;
+  void* user;
+} cc1101_sync_mode_cfg_t;
+
+esp_err_t cc1101_init(const cc1101_device_cfg_t *cfg, cc1101_device_t** device);
 
 esp_err_t cc1101_spi_tx(const cc1101_device_t *device, uint8_t cmd,
                         const uint8_t *in, uint8_t *out, size_t len);

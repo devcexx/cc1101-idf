@@ -23,31 +23,34 @@ void app_main(void) {
     .sclk_io_num = SCLK_GPIO,
   };
 
-  cc1101_device_t cc = {
+  cc1101_device_cfg_t cfg = {
     // GDO pins are not needed for this example.
     .gdo0_io_num = -1,
     .gdo2_io_num = -1,
     .cs_io_num = CSN_GPIO,
-    .miso_io_num = MISO_GPIO
+    .miso_io_num = MISO_GPIO,
+    .spi_host = SPI2_HOST
   };
 
+  cc1101_device_t* cc;
+
   ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &spi_bus_cfg, SPI_DMA_CH_AUTO));
-  ESP_ERROR_CHECK(cc1101_init(SPI2_HOST, &cc));
+  ESP_ERROR_CHECK(cc1101_init(&cfg, &cc));
 
   bool sanity_result = true;
   ESP_LOGI(TAG, "Hard resetting device...");
-  ESP_ERROR_CHECK(cc1101_hard_reset(&cc));
+  ESP_ERROR_CHECK(cc1101_hard_reset(cc));
 
   ESP_LOGI(TAG, "Device internal state after reset:");
   ESP_LOGI(TAG, "");
 
-  ESP_ERROR_CHECK(cc1101_debug_print_regs(&cc));
+  ESP_ERROR_CHECK(cc1101_debug_print_regs(cc));
   ESP_LOGI(TAG, "Checking version and part number...");
   uint8_t version;
   uint8_t partnum;
 
-  ESP_ERROR_CHECK(cc1101_read_status_reg(&cc, CC1101_REG_STATUS_PARTNUM, &partnum));
-  ESP_ERROR_CHECK(cc1101_read_status_reg(&cc, CC1101_REG_STATUS_VERSION, &version));
+  ESP_ERROR_CHECK(cc1101_read_status_reg(cc, CC1101_REG_STATUS_PARTNUM, &partnum));
+  ESP_ERROR_CHECK(cc1101_read_status_reg(cc, CC1101_REG_STATUS_VERSION, &version));
 
   if (partnum == 0 && version == 0x14) {
     ESP_LOGI(TAG, "Version and part number seems to be fine! (partnum= 0x%02x; version= 0x%02x)", partnum, version);
@@ -70,13 +73,13 @@ void app_main(void) {
     }
   }
 
-  ESP_ERROR_CHECK(cc1101_write_burst(&cc, CC1101_FIRST_CFG_REG, regs_expected, CC1101_CONFIG_REG_COUNT));
+  ESP_ERROR_CHECK(cc1101_write_burst(cc, CC1101_FIRST_CFG_REG, regs_expected, CC1101_CONFIG_REG_COUNT));
   ESP_LOGI(TAG, "Success! This is new internal state:");
   ESP_LOGI(TAG, "");
-  ESP_ERROR_CHECK(cc1101_debug_print_regs(&cc));
+  ESP_ERROR_CHECK(cc1101_debug_print_regs(cc));
 
   ESP_LOGI(TAG, "Reading all the registers...");
-  ESP_ERROR_CHECK(cc1101_read_burst(&cc, CC1101_FIRST_CFG_REG, regs_got, CC1101_CONFIG_REG_COUNT));
+  ESP_ERROR_CHECK(cc1101_read_burst(cc, CC1101_FIRST_CFG_REG, regs_got, CC1101_CONFIG_REG_COUNT));
 
   for (int i = 0; i < CC1101_CONFIG_REG_COUNT; i++) {
     if (regs_expected[i] != regs_got[i]) {
@@ -91,6 +94,6 @@ void app_main(void) {
   } else {
     ESP_LOGE(TAG, "Device FAILED sanity check! Check logs for more info");
   }
-  ESP_ERROR_CHECK(cc1101_hard_reset(&cc));
+  ESP_ERROR_CHECK(cc1101_hard_reset(cc));
 
 }

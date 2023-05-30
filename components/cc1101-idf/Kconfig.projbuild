@@ -6,4 +6,11 @@ menu "CC1101-IDF Configuration"
 	    Enables the compilation of debugging tools for CC1101,
 	    like registers names, and other debugging-related
 	    functions.
+
+    config MAX_CC1101_DEVICES
+        int "Maximum number of CC1101 devices"
+	default 1
+	help
+	    Defines the maximum number of CC1101 devices configured at
+	    a time.
 endmenu
