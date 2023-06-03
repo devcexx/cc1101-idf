@@ -25,8 +25,8 @@ void app_main(void) {
 
   cc1101_device_cfg_t cfg = {
     // GDO pins are not needed for this example.
-    .gdo0_io_num = -1,
-    .gdo2_io_num = -1,
+    .gdo0_io_num = CC1101_PIN_UNUSED,
+    .gdo2_io_num = CC1101_PIN_UNUSED,
     .cs_io_num = CSN_GPIO,
     .miso_io_num = MISO_GPIO,
     .spi_host = SPI2_HOST

@@ -11,6 +11,8 @@
 #define CC1101_SPI_QUEUE_SIZE 10
 #define CC1101_SPI_BEGIN_TIMEOUT_US 100
 
+#define CC1101_PIN_UNUSED -1
+
 typedef enum __attribute__((packed)) {
   CC1101_STROBE_RES = 0x30,     // Reset chip.
   CC1101_STROBE_FSTXON = 0x31,  // Enable and calibrate frequency synthesizer (if MCSM0.FS_AUTOCAL=1).
@@ -125,6 +127,47 @@ typedef enum __attribute__((packed)) {
   CC1101_DEVICE_STATE_TXFIFO_UNDERFLOW = 7,
 } cc1101_device_state_t;
 
+typedef enum __attribute__((packed)) {
+  /**
+   * Indicates the Normal TX/RX mode. In this mode data is
+   * sent/received through SPI using the device FIFO queues.
+   */
+  CC1101_TRANS_MODE_NORMAL = 0, // TODO Unsupported
+
+  /**
+   * Indicates the synchronous TX/RX mode. In this mode, the CC1101
+   * sends a clock signal through one of the GPOx pins (In this
+   * library, it is hardcoded to be GPO2). This signal is used to
+   * synchronize data exchange between the MCU and the CC1101. In this
+   * mode, the MCU should pull high or low the GPO0 pin when the clock
+   * signal raises for transmitting data. In RX mode, MCU should
+   * sample the value of any of the GPOx pins on each clock rise (on
+   * this library, RX pin is also GPO0). The frequency of the clock is
+   * equal to the configured data rate, except if the Manchester
+   * encoding, in which the clock rate is half the data rate.
+   *
+   * More info on AN095 document:
+   * https://www.ti.com/lit/an/swra359a/swra359a.pdf
+   */
+  CC1101_TRANS_MODE_SYNCHRONOUS = 1,
+
+  /**
+   * This mode is only used for testing purposes. In this mode, in TX
+   * mode, the CC1101 will send random data. In RX mode, it will act
+   * as the normal mode.
+   */
+  CC1101_TRANS_MODE_TEST_RANDOM = 2,
+
+  /**
+   * Indicates the asynchronous TX/RX mode. This mode works like the
+   * synchronous mode, but without clock, which makes impossible to
+   * get a synchronization between the MCU and the CC1101. This is a
+   * legacy transmission mode and it is not recommended for
+   * use. Normal or synchronous TX/RX mode are preferred.
+   */
+  CC1101_TRANS_MODE_ASYNCHRONOUS = 3,
+} cc1101_trans_mode_t;
+
 typedef union {
   uint8_t byte;
   struct {
@@ -172,7 +215,22 @@ esp_err_t cc1101_read_burst(const cc1101_device_t *device,
                             size_t len);
 
 esp_err_t cc1101_write_patable(const cc1101_device_t *device, const uint8_t data[CC1101_PATABLE_SIZE]);
-esp_err_t cc1101_read_patable(const cc1101_device_t *device, uint8_t data[CC1101_PATABLE_SIZE]);
+esp_err_t cc1101_read_patable(const cc1101_device_t *device,
+                              uint8_t data[CC1101_PATABLE_SIZE]);
+
+
+esp_err_t cc1101_configure_sync_mode(const cc1101_device_t *device, const cc1101_sync_mode_cfg_t* cfg);
+esp_err_t cc1101_trans_continuous_write(const cc1101_device_t *device, uint32_t level);
+esp_err_t cc1101_trans_continuous_read(const cc1101_device_t *device, uint32_t* level);
+
+esp_err_t cc1101_trans_mode_set(const cc1101_device_t *device);
+
+esp_err_t cc1101_enable_tx(const cc1101_device_t *device, cc1101_trans_mode_t mode);
+esp_err_t cc1101_enable_rx(const cc1101_device_t *device, cc1101_trans_mode_t mode);
+esp_err_t cc1101_set_idle(const cc1101_device_t *device);
+esp_err_t cc1101_calibrate(const cc1101_device_t *device);
+
+
 
 #ifdef CONFIG_ENABLE_DEBUG_SYMBOLS
 /**

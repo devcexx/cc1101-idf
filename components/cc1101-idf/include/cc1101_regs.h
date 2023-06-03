@@ -75,8 +75,6 @@ typedef enum __attribute__((packed)) {
 #define CC1101_LAST_STATUS_REG CC1101_REG_STATUS_RXBYTES
 #define CC1101_STATUS_REG_COUNT (CC1101_LAST_STATUS_REG - CC1101_FIRST_STATUS_REG + 1)
 
-#endif // CC1101_REGS_H
-
 typedef enum __attribute__((packed)) {
   // TODO This list is incomplete. Just added a few entries for now
   CC1101_GDOX_CFG_SERIAL_CLOCK = 0x0b,
@@ -86,6 +84,20 @@ typedef enum __attribute__((packed)) {
   CC1101_GDOX_CFG_CRC_OK = 0x0f,
 } cc1101_gdox_cfg_t;
 
+typedef enum __attribute__((packed)) {
+  CC1101_PKT_FORMAT_NORMAL = 0,
+  CC1101_PKT_FORMAT_SYNCHRONOUS = 1,
+  CC1101_PKT_FORMAT_RANDOM_TX_MODE = 2,
+  CC1101_PKT_FORMAT_ASYNCHRONOUS = 3,
+} cc1101_pkt_format_t;
+
+typedef enum __attribute__((packed)) {
+  CC1101_LENGTH_CONFIG_FIXED = 0,
+  CC1101_LENGTH_CONFIG_VARIABLE = 1,
+  CC1101_LENGTH_CONFIG_INFINITE = 2,
+  CC1101_LENGTH_CONFIG_RESERVED = 3,
+} cc1101_length_config_t;
+
 typedef union __attribute__((packed)) {
   uint8_t value;
   struct {
@@ -93,7 +105,7 @@ typedef union __attribute__((packed)) {
     uint8_t gdo2_inv:1;
     uint8_t unused:1;
   } fields;
-} cc1101_reg_cfg_iocfg2_t;
+} cc1101_reg_iocfg2_t;
 
 typedef union __attribute__((packed)) {
   uint8_t value;
@@ -102,7 +114,7 @@ typedef union __attribute__((packed)) {
     uint8_t gdo1_inv:1;
     uint8_t unused:1;
   } fields;
-} cc1101_reg_cfg_iocfg1_t;
+} cc1101_reg_iocfg1_t;
 
 typedef union __attribute__((packed)) {
   uint8_t value;
@@ -111,4 +123,17 @@ typedef union __attribute__((packed)) {
     uint8_t gdo0_inv:1;
     uint8_t temp_sensor_enable:1;
   } fields;
-} cc1101_reg_cfg_iocfg0_t;
+} cc1101_reg_iocfg0_t;
+
+typedef union __attribute__((packed)) {
+  uint8_t value;
+  struct {
+    cc1101_length_config_t length_config:2;
+    uint8_t crc_en:1;
+    uint8_t unused_1:1;
+    cc1101_pkt_format_t pkt_format:2;
+    uint8_t white_data:1;
+    uint8_t unused_2:1;
+  } fields;
+} cc1101_reg_pktctrl0_t;
+#endif // CC1101_REGS_H

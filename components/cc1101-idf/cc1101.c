@@ -1,7 +1,9 @@
+#include "esp_compiler.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 #include "freertos/task.h"
 #include "include/cc1101.h"
+#include "include/cc1101_regs.h"
 #include "include_priv/cc1101_priv.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
@@ -344,4 +346,198 @@ esp_err_t cc1101_hard_reset(const cc1101_device_t *device) {
   cc1101_chip_deselect(dev);
   active_wait_us(40);
   return cc1101_strobe(device, CC1101_STROBE_RES, NULL);
+}
+
+static void IRAM_ATTR cc1101_sync_mode_clk_isr(void* arg) {
+  cc1101_device_priv_t* dev = (cc1101_device_priv_t*) arg;
+  dev->sync_mode_cfg.clk_cb((cc1101_device_t*)dev, dev->sync_mode_cfg.user);
+}
+
+esp_err_t cc1101_configure_sync_mode(const cc1101_device_t *device, const cc1101_sync_mode_cfg_t* cfg) {
+    cc1101_device_priv_t* dev = cc1101_get_device(device);
+
+    // GDO2 will be used to receive sync clock.
+    if (dev->gdo2_io_num == CC1101_PIN_UNUSED) {
+      ESP_LOGE(TAG, "GPIO GDO2 is required to be attached and configured for using synchronous mode");
+      return ESP_FAIL;
+    }
+
+    // GDO0 will be used to send / receive data.
+    if (dev->gdo0_io_num == CC1101_PIN_UNUSED) {
+      ESP_LOGE(TAG, "GPIO GDO0 is required to be attached and configured for using synchronous mode");
+      return ESP_FAIL;
+    }
+
+    if (cfg->clk_cb == NULL) {
+      ESP_LOGE(TAG, "Cannot configure synchronous mode without a callback. How am I suppposed to "
+	       "tell you when to write/read data from the device otherwise?");
+      return ESP_FAIL;
+    }
+
+    memcpy(&dev->sync_mode_cfg, cfg, sizeof(cc1101_sync_mode_cfg_t));
+    dev->sync_mode_configured = true;
+    return ESP_OK;
+}
+
+static esp_err_t cc1101_init_sync_mode(const cc1101_device_priv_t* dev, bool tx) {
+  gpio_config_t gdo2_conf = { 0 };
+
+  if (unlikely(!dev->sync_mode_configured)) {
+    ESP_LOGE(TAG, "Synchronous mode not configured. Use cc1101_configure_sync_mode before "
+	     "starting TX/RX.");
+    return ESP_FAIL;
+  }
+
+  gpio_reset_pin(dev->gdo0_io_num);
+  gpio_sleep_set_pull_mode(dev->gdo0_io_num, GPIO_PULLDOWN_ONLY);
+  if (tx) {
+    gpio_set_direction(dev->gdo0_io_num, GPIO_MODE_OUTPUT);
+  } else {
+    gpio_set_direction(dev->gdo0_io_num, GPIO_MODE_INPUT);
+  }
+
+  gpio_reset_pin(dev->gdo2_io_num);
+  gdo2_conf.intr_type = GPIO_INTR_POSEDGE;
+  gdo2_conf.mode = GPIO_MODE_INPUT;
+  gdo2_conf.pin_bit_mask = 1ULL << dev->gdo2_io_num;
+  gdo2_conf.pull_down_en = 1;
+  gdo2_conf.pull_up_en = 0;
+  gpio_config(&gdo2_conf);
+
+  return gpio_isr_handler_add(dev->gdo2_io_num, cc1101_sync_mode_clk_isr, (void*) dev);
+}
+
+static void cc1101_deinit_sync_mode(const cc1101_device_priv_t* dev) {
+  gpio_isr_handler_remove(dev->gdo2_io_num);
+  gpio_reset_pin(dev->gdo0_io_num);
+  gpio_reset_pin(dev->gdo2_io_num);
+}
+
+esp_err_t cc1101_trans_continuous_write(const cc1101_device_t *device, uint32_t level) {
+  const cc1101_device_priv_t* dev = cc1101_get_device(device);
+  if (unlikely(dev->last_trans_mode != CC1101_TRANS_MODE_SYNCHRONOUS || dev->last_state != CC1101_PRIV_STATE_TX)) {
+    return ESP_FAIL;
+  }
+
+  return gpio_set_level(dev->gdo0_io_num, level);
+}
+
+esp_err_t cc1101_trans_continuous_read(const cc1101_device_t *device, uint32_t* level) {
+  const cc1101_device_priv_t* dev = cc1101_get_device(device);
+  if (unlikely(dev->last_trans_mode != CC1101_TRANS_MODE_SYNCHRONOUS || dev->last_state != CC1101_PRIV_STATE_RX)) {
+    return ESP_FAIL;
+  }
+
+  *level = gpio_get_level(dev->gdo0_io_num);
+  return ESP_OK;
+}
+
+static esp_err_t cc1101_update_pkt_format(const cc1101_device_t *device, cc1101_pkt_format_t mode) {
+  cc1101_reg_pktctrl0_t pktctrl0;
+  esp_err_t ret;
+
+  if ((ret = cc1101_read_config_reg(device, CC1101_REG_CFG_PKTCTRL0, &pktctrl0.value)) != ESP_OK) {
+    return ret;
+  }
+
+  pktctrl0.fields.pkt_format = (cc1101_pkt_format_t) mode;
+  if ((ret = cc1101_write_config_reg(device, CC1101_REG_CFG_PKTCTRL0, pktctrl0.value)) != ESP_OK) {
+    return ret;
+  }
+
+  return ESP_OK;
+}
+
+static esp_err_t cc1101_configure_gdo0(const cc1101_device_t *device, cc1101_gdox_cfg_t cfg) {
+  cc1101_reg_iocfg0_t iocfg0 = { 0 };
+  iocfg0.fields.gdo0_cfg = cfg;
+  return cc1101_write_config_reg(device, CC1101_REG_CFG_IOCFG0, iocfg0.value);
+}
+
+static esp_err_t cc1101_configure_gdo2(const cc1101_device_t *device, cc1101_gdox_cfg_t cfg) {
+  cc1101_reg_iocfg2_t iocfg2 = { 0 };
+  iocfg2.fields.gdo2_cfg = cfg;
+  return cc1101_write_config_reg(device, CC1101_REG_CFG_IOCFG2, iocfg2.value);
+}
+
+esp_err_t cc1101_enable_tx(const cc1101_device_t *device,
+                           cc1101_trans_mode_t mode) {
+  cc1101_device_priv_t* dev = cc1101_get_device(device);
+  esp_err_t ret;
+
+  if (unlikely(dev->last_state != CC1101_PRIV_STATE_IDLE)) {
+    ESP_LOGE(TAG, "Last known device state is not IDLE. Call cc1101_set_idle before.");
+    return ESP_FAIL;
+  }
+
+  if ((ret = cc1101_update_pkt_format(device, (cc1101_pkt_format_t) mode)) != ESP_OK) {
+    return ret;
+  }
+  switch (mode) {
+  case CC1101_TRANS_MODE_SYNCHRONOUS:
+    if ((ret = cc1101_configure_gdo2(device, CC1101_GDOX_CFG_SERIAL_CLOCK)) != ESP_OK) {
+      return ret;
+    }
+    if ((ret = cc1101_init_sync_mode(dev, true)) != ESP_OK) {
+      return ret;
+    }
+    break;
+  default:
+    break;
+  }
+
+  dev->last_state = CC1101_PRIV_STATE_TX;
+  dev->last_trans_mode = mode;
+  return cc1101_strobe(device, CC1101_STROBE_TX, NULL);
+}
+
+esp_err_t cc1101_enable_rx(const cc1101_device_t *device,
+                           cc1101_trans_mode_t mode) {
+  cc1101_device_priv_t* dev = cc1101_get_device(device);
+  esp_err_t ret;
+
+  if (unlikely(dev->last_state != CC1101_PRIV_STATE_IDLE)) {
+    ESP_LOGE(TAG, "Last known device state is not IDLE. Call cc1101_set_idle before.");
+    return ESP_FAIL;
+  }
+
+  if ((ret = cc1101_update_pkt_format(device, (cc1101_pkt_format_t) mode)) != ESP_OK) {
+    return ret;
+  }
+  switch (mode) {
+  case CC1101_TRANS_MODE_SYNCHRONOUS:
+    if ((ret = cc1101_configure_gdo2(device, CC1101_GDOX_CFG_SERIAL_CLOCK)) != ESP_OK) {
+      return ret;
+    }
+    if ((ret = cc1101_configure_gdo0(device, CC1101_GDOX_CFG_SERIAL_SYNCHRONOUS_DATA_OUTPUT)) != ESP_OK) {
+      return ret;
+    }
+    if ((ret = cc1101_init_sync_mode(dev, false)) != ESP_OK) {
+      return ret;
+    }
+    break;
+  default:
+    break;
+  }
+
+  dev->last_state = CC1101_PRIV_STATE_RX;
+  dev->last_trans_mode = mode;
+  return cc1101_strobe(device, CC1101_STROBE_RX, NULL);
+}
+
+esp_err_t cc1101_set_idle(const cc1101_device_t *device) {
+  cc1101_device_priv_t* dev = cc1101_get_device(device);
+  switch (dev->last_trans_mode) {
+  case CC1101_TRANS_MODE_SYNCHRONOUS:
+    cc1101_deinit_sync_mode(dev);
+    break;
+  default:
+    break;
+  }
+  dev->last_state = CC1101_PRIV_STATE_IDLE;
+  return cc1101_strobe(device, CC1101_STROBE_IDLE, NULL);
+}
+
+esp_err_t cc1101_calibrate(const cc1101_device_t *device) {
+  return cc1101_strobe(device, CC1101_STROBE_CAL, NULL);
 }

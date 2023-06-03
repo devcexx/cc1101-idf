@@ -2,7 +2,7 @@
 #include "include_priv/cc1101_priv.h"
 #include "esp_err.h"
 
-cc1101_device_priv_t cc1101_devices[CONFIG_MAX_CC1101_DEVICES];
+cc1101_device_priv_t cc1101_devices[CONFIG_MAX_CC1101_DEVICES] = { 0 };
 
 esp_err_t cc1101_allocate_device(const cc1101_device_cfg_t* cfg, cc1101_device_priv_t** ptr) {
   size_t free_slot;
