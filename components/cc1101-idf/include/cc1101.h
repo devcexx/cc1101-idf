@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include "cc1101_regs.h"
 
-#define CC1101_SCLK_HZ 100000
+#define CC1101_SCLK_HZ 5000000
 #define CC1101_SPI_QUEUE_SIZE 10
 #define CC1101_SPI_BEGIN_TIMEOUT_US 100
 
