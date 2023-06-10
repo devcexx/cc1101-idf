@@ -29,7 +29,9 @@ void app_main(void) {
     .gdo2_io_num = CC1101_PIN_UNUSED,
     .cs_io_num = CSN_GPIO,
     .miso_io_num = MISO_GPIO,
-    .spi_host = SPI2_HOST
+    .spi_host = SPI2_HOST,
+     // Check your hardware for setting the correct value!
+    .crystal_freq = CC1101_CRYSTAL_26MHZ
   };
 
   cc1101_device_t* cc;

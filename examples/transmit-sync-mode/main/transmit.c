@@ -78,10 +78,12 @@ void app_main(void) {
 
   cc1101_device_cfg_t cfg = {
     .spi_host = SPI2_HOST,
-    .gdo0_io_num = 17,
-    .gdo2_io_num = 40,
+    .gdo0_io_num = GDO0_GPIO,
+    .gdo2_io_num = GDO2_GPIO,
     .cs_io_num = CSN_GPIO,
-    .miso_io_num = MISO_GPIO
+    .miso_io_num = MISO_GPIO,
+     // Check your hardware for setting the correct value!
+    .crystal_freq = CC1101_CRYSTAL_26MHZ
   };
 
   cc1101_device_t* cc;
@@ -95,6 +97,10 @@ void app_main(void) {
   ESP_LOGI(TAG, "Configuring...");
   ESP_ERROR_CHECK(cc1101_write_burst(cc, CC1101_FIRST_CFG_REG, registers, sizeof(registers)));
   ESP_ERROR_CHECK(cc1101_write_patable(cc, patable));
+
+  // This data rate is already set by registers, but just showing how
+  // it works. Manually setting data rate to 16 kbaud
+  ESP_ERROR_CHECK(cc1101_set_data_rate(cc, 16000));
 
   cc1101_sync_mode_cfg_t sync_cfg = {
     .clk_cb = sync_mode_clk_cb,

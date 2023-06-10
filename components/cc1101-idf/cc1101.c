@@ -15,6 +15,7 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_check.h"
+#include <math.h>
 
 #define TAG "cc1101"
 
@@ -64,6 +65,7 @@ esp_err_t cc1101_init(const cc1101_device_cfg_t *cfg, cc1101_device_t** device) 
   dev->gdo0_io_num = cfg->gdo0_io_num;
   dev->gdo2_io_num = cfg->gdo2_io_num;
   dev->miso_io_num = cfg->miso_io_num;
+  dev->crystal_freq = cfg->crystal_freq;
 
   gpio_reset_pin(cfg->cs_io_num);
   gpio_set_direction(cfg->cs_io_num, GPIO_MODE_OUTPUT);
@@ -540,4 +542,43 @@ esp_err_t cc1101_set_idle(const cc1101_device_t *device) {
 
 esp_err_t cc1101_calibrate(const cc1101_device_t *device) {
   return cc1101_strobe(device, CC1101_STROBE_CAL, NULL);
+}
+
+static esp_err_t cc1101_fill_data_rate_regs(uint32_t baud_rate, uint32_t crystal_freq, uint8_t* mdmcfg4, uint8_t* mdmcfg3) {
+  if (baud_rate < 600 || baud_rate > 500000) {
+    ESP_LOGE(TAG, "Attempt to set a data rate beyond limits. Expected a baud rate between 600 baud and 500k baud, but %" PRIu32 " got", baud_rate);
+    return ESP_FAIL;
+  }
+
+  uint8_t drate_e = (uint8_t) log2((double)((uint64_t)baud_rate * (1 << 20)) / crystal_freq);
+
+  uint8_t drate_m = (uint8_t)round((double)((uint64_t)baud_rate * (1 << 28)) /
+				   ((uint64_t)crystal_freq * (1 << drate_e)) - 256);
+
+  *mdmcfg3 = drate_m;
+  *mdmcfg4 |= (drate_e & 0xf);
+
+  return ESP_OK;
+}
+
+esp_err_t cc1101_set_data_rate(const cc1101_device_t* device, uint32_t baud_rate) {
+  esp_err_t err;
+  uint8_t regs[2];
+  uint8_t* mdmcfg4 = &regs[0];
+  uint8_t* mdmcfg3 = &regs[1];
+  cc1101_device_priv_t* dev = cc1101_get_device(device);
+
+  if ((err = cc1101_read_config_reg(device, CC1101_REG_CFG_MDMCFG4, mdmcfg4)) != ESP_OK) {
+    return err;
+  }
+
+  if ((err = cc1101_fill_data_rate_regs(baud_rate, dev->crystal_freq, mdmcfg4, mdmcfg3)) != ESP_OK) {
+    return err;
+  }
+
+  if ((err = cc1101_write_burst(device, CC1101_REG_CFG_MDMCFG4, regs, 2)) != ESP_OK) {
+    return err;
+  }
+
+  return ESP_OK;
 }

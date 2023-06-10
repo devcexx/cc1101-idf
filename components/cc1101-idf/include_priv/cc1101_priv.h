@@ -3,6 +3,7 @@
 
 #include "../include/cc1101.h"
 #include "esp_err.h"
+#include <stdint.h>
 
 typedef enum {
   CC1101_PRIV_STATE_IDLE = 0,
@@ -17,6 +18,7 @@ typedef struct {
   gpio_num_t gdo0_io_num;
   gpio_num_t gdo2_io_num;
   gpio_num_t cs_io_num;
+  uint32_t crystal_freq;
 
   cc1101_priv_state_t last_state;
   cc1101_trans_mode_t last_trans_mode;

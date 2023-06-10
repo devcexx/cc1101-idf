@@ -13,6 +13,9 @@
 
 #define CC1101_PIN_UNUSED -1
 
+#define CC1101_CRYSTAL_26MHZ 26000000
+#define CC1101_CRYSTAL_27MHZ 27000000
+
 typedef enum __attribute__((packed)) {
   CC1101_STROBE_RES = 0x30,     // Reset chip.
   CC1101_STROBE_FSTXON = 0x31,  // Enable and calibrate frequency synthesizer (if MCSM0.FS_AUTOCAL=1).
@@ -114,6 +117,7 @@ typedef struct {
   gpio_num_t gdo0_io_num;
   gpio_num_t gdo2_io_num;
   gpio_num_t cs_io_num;
+  uint32_t crystal_freq;
 } cc1101_device_cfg_t;
 
 typedef enum __attribute__((packed)) {
@@ -229,6 +233,8 @@ esp_err_t cc1101_enable_tx(const cc1101_device_t *device, cc1101_trans_mode_t mo
 esp_err_t cc1101_enable_rx(const cc1101_device_t *device, cc1101_trans_mode_t mode);
 esp_err_t cc1101_set_idle(const cc1101_device_t *device);
 esp_err_t cc1101_calibrate(const cc1101_device_t *device);
+
+esp_err_t cc1101_set_data_rate(const cc1101_device_t* device, uint32_t baud_rate);
 
 
 
