@@ -556,7 +556,7 @@ static esp_err_t cc1101_fill_data_rate_regs(uint32_t baud_rate, uint32_t crystal
 				   ((uint64_t)crystal_freq * (1 << drate_e)) - 256);
 
   *mdmcfg3 = drate_m;
-  *mdmcfg4 |= (drate_e & 0xf);
+  *mdmcfg4 = (*mdmcfg4 & 0xf0) | (drate_e & 0xf);
 
   return ESP_OK;
 }
